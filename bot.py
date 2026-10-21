@@ -106,7 +106,8 @@ class OnmyojiBot:
             'realm_raid': [
                 'realm_raid_button', 'refresh_button', 'enemy_button',
                 'start_button', 'attack_button', 'ready_button', 'battle_screen', 'auto_button',
-                'victory_screen', 'reward_screen', 'exit_button', 'section', 'enemy_event', 'empty'
+                'victory_screen', 'reward_screen', 'exit_button', 'section', 'enemy_event', 'empty',
+                'coopwanted', 'refuse', 'ok'
             ],
             'souls': [
                 'start_button',
@@ -121,6 +122,9 @@ class OnmyojiBot:
             'victory_screen': ['finished1'],
             'reward_screen': ['reward_screen'],
             'empty': ['empty', 'out_of_tickets', 'finish_sign'],
+            'coopwanted': ['coopwanted'],
+            'refuse': ['refuse'],
+            'ok': ['ok'],
             'realm_raid_button': ['realm_raid_button', 'realmRaid', 'realmraid'],
             'refresh_button': ['refresh_button', 'refresh'],
             'enemy_button': ['enemy_button', 'section', 'click'],
@@ -136,6 +140,7 @@ class OnmyojiBot:
             'auto_button': 'chế độ tự động',
             'exit_button': 'nút thoát',
             'refresh_button': 'nút làm mới',
+            'ok': 'nút OK',
             'realm_raid_button': 'Realm Raid',
             'attack_button': 'nút Attack',
             'souls_button': 'Souls',
@@ -816,6 +821,23 @@ class OnmyojiBot:
                 self.stop_scanning(silent=True)
                 return False
 
+            # --- 0.1. TỪ CHỐI LỜI MỜI TRUY / CO-OP WANTED ---
+            coop_match = self.find_template(screen, 'coopwanted', threshold=0.8)
+            if coop_match:
+                self._log_debug("Có người mời truy nã yêu quái, đang từ chối lời mời...")
+                refuse_match = self.find_template(screen, 'refuse', threshold=0.8)
+                if refuse_match:
+                    self.click(refuse_match['x'], refuse_match['y'])
+                    if self.gui:
+                        self.gui.write_log("Đã từ chối lời mời truy nã yêu quái.")
+                    return True
+
+                # Fallback an toàn nếu không tìm thấy template refuse
+                self.click(560, 485)
+                if self.gui:
+                    self.gui.write_log("Đã bấm vị trí fallback để từ chối lời mời truy nã yêu quái.")
+                return True
+
             # --- ƯU TIÊN SỐ 1: TRONG TRẬN (Battle Screen) ---
             if self.find_template(screen, 'battle_screen', threshold=0.75):
                 self.game_state['screen'] = 'in_battle'
@@ -885,13 +907,32 @@ class OnmyojiBot:
                 return True
 
             # --- 5. XỬ LÝ KẸT TRONG LOBBY / REFRESH ---
+            refresh_match = self.find_template(screen, 'refresh_button')
+            if refresh_match:
+                self._log_debug("Không tìm thấy đối thủ, đang bấm nút Refresh rồi xác nhận OK.")
+                self.click(refresh_match['x'], refresh_match['y'])
+                time.sleep(0.6)
+                ok_match = self.find_template(self.capture_screen(), 'ok', threshold=0.8)
+                if ok_match:
+                    self.click(ok_match['x'], ok_match['y'])
+                    self._log_debug("Đã bấm nút OK sau khi Refresh.")
+                    if self.gui:
+                        self.gui.write_log("Đã bấm OK sau khi Refresh.")
+                if self.gui:
+                    self.gui.write_log("Không tìm thấy đối thủ, đã bấm Refresh.")
+                return True
+
             self._realm_no_target_count += 1
             now = time.time()
             if self._realm_no_target_count >= 3 and (now - self._last_refresh_time) > self._refresh_cooldown:
                 refresh_match = self.find_template(screen, 'refresh_button')
                 if refresh_match:
                     self.click(refresh_match['x'], refresh_match['y'])
-                    if self.gui: self.gui.write_log("Đã bấm Làm mới danh sách.")
+                    time.sleep(0.6)
+                    ok_match = self.find_template(self.capture_screen(), 'ok', threshold=0.8)
+                    if ok_match:
+                        self.click(ok_match['x'], ok_match['y'])
+                    if self.gui: self.gui.write_log("Đã bấm Làm mới danh sách và xác nhận OK.")
                 self._last_refresh_time = now
                 self._realm_no_target_count = 0
                 return True
