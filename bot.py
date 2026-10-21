@@ -35,10 +35,12 @@ try:
     import win32gui
     import win32con
     import win32api
+    import win32ui
 except Exception:
     win32gui = None
     win32con = None
     win32api = None
+    win32ui = None
 
 
 class OnmyojiBot:
@@ -74,7 +76,6 @@ class OnmyojiBot:
         os.makedirs(self.log_dir, exist_ok=True)
         self.template_folder_candidates = {
             'souls': ['souls'],
-            'exploration': ['exploration'],
             'realm_raid': ['realm_raid', 'Realm_Raid', 'Realm Raid']
         }
         self._create_template_directories()
@@ -86,6 +87,8 @@ class OnmyojiBot:
         self.tasks = tasks
         self.current_window = None
         self.current_hwnd = None
+        self.game_window_rect = None
+        self.game_hidden = False
         self.preferred_window_size = None
         self.last_click_target = None
         self.last_click_time = 0
@@ -110,10 +113,6 @@ class OnmyojiBot:
                 'victory_screen', 'reward_screen',
                 'plus_sign'
             ],
-            'exploration': [
-                'exploration_button', 'chapter_button', 'zone_button',
-                'explore_button'
-            ]
         }
         self.template_aliases = {
             'souls_button': ['souls_button'],
@@ -122,10 +121,6 @@ class OnmyojiBot:
             'victory_screen': ['finished1'],
             'reward_screen': ['reward_screen'],
             'empty': ['empty', 'out_of_tickets', 'finish_sign'],
-            'exploration_button': ['exploration_button'],
-            'chapter_button': ['chapter_button'],
-            'zone_button': ['zone_button'],
-            'explore_button': ['explore_button'],
             'realm_raid_button': ['realm_raid_button', 'realmRaid', 'realmraid'],
             'refresh_button': ['refresh_button', 'refresh'],
             'enemy_button': ['enemy_button', 'section', 'click'],
@@ -288,11 +283,11 @@ class OnmyojiBot:
             raise
 
     def capture_background(self, hwnd):
-        """Capture using MSS (Desktop coordinates) and math-pad to target size."""
+        """Capture the game client without requiring it to be foreground."""
         target_w = int(self.config.get('desired_client_w', 1136))
         target_h = int(self.config.get('desired_client_h', 640))
 
-        if not hwnd or not win32gui.IsWindow(hwnd):
+        if not hwnd or not win32gui or not win32gui.IsWindow(hwnd):
             self._log_debug('capture_background: invalid hwnd')
             return None
 
@@ -301,20 +296,73 @@ class OnmyojiBot:
             if actual_w <= 0 or actual_h <= 0:
                 return None
 
-            client_pos = win32gui.ClientToScreen(hwnd, (0, 0))
+            img = None
+            if win32ui is not None:
+                # PrintWindow renders the window into an off-screen bitmap, so
+                # it still works when the game is covered or minimized.
+                window_left, window_top, _, _ = win32gui.GetWindowRect(hwnd)
+                client_left, client_top = win32gui.ClientToScreen(hwnd, (0, 0))
+                crop_x = max(0, client_left - window_left)
+                crop_y = max(0, client_top - window_top)
+                window_w = max(actual_w + crop_x, actual_w)
+                window_h = max(actual_h + crop_y, actual_h)
 
-            monitor = {
-                "top": client_pos[1],
-                "left": client_pos[0],
-                "width": actual_w,
-                "height": actual_h
-            }
+                window_dc = win32gui.GetWindowDC(hwnd)
+                source_dc = win32ui.CreateDCFromHandle(window_dc)
+                memory_dc = source_dc.CreateCompatibleDC()
+                bitmap = win32ui.CreateBitmap()
+                bitmap.CreateCompatibleBitmap(source_dc, window_w, window_h)
+                memory_dc.SelectObject(bitmap)
+                try:
+                    rendered = ctypes.windll.user32.PrintWindow(
+                        int(hwnd),
+                        memory_dc.GetSafeHdc(),
+                        2,  # PW_RENDERFULLCONTENT
+                    )
+                    if rendered:
+                        bits = bitmap.GetBitmapBits(True)
+                        bgra = np.frombuffer(bits, dtype=np.uint8).reshape((window_h, window_w, 4))
+                        img = cv2.cvtColor(bgra, cv2.COLOR_BGRA2BGR)
+                        img = img[crop_y:crop_y + actual_h, crop_x:crop_x + actual_w]
+                finally:
+                    # Cleanup must not discard a successful capture. Some
+                    # pywin32 versions reject DeleteDC on a DC created from
+                    # GetWindowDC; ReleaseDC is the correct operation for it.
+                    try:
+                        memory_dc.DeleteDC()
+                    except Exception as cleanup_error:
+                        self._log_debug(f'capture cleanup memory DC failed: {cleanup_error}')
+                    try:
+                        source_dc.DeleteDC()
+                    except Exception as cleanup_error:
+                        self._log_debug(f'capture cleanup source DC failed: {cleanup_error}')
+                    try:
+                        win32gui.DeleteObject(bitmap.GetHandle())
+                    except Exception as cleanup_error:
+                        self._log_debug(f'capture cleanup bitmap failed: {cleanup_error}')
+                    try:
+                        win32gui.ReleaseDC(hwnd, window_dc)
+                    except Exception as cleanup_error:
+                        self._log_debug(f'capture cleanup window DC failed: {cleanup_error}')
 
-            with mss.mss() as sct:
-                sct_img = sct.grab(monitor)
-                img = np.array(sct_img)
-                img = img[:, :, :3]
-                img = np.ascontiguousarray(img)
+            # Some Unity/DirectX versions cannot render while minimized. Keep
+            # the old desktop capture as a fallback for visible windows.
+            if img is None and not win32gui.IsIconic(hwnd):
+                client_pos = win32gui.ClientToScreen(hwnd, (0, 0))
+                monitor = {
+                    "top": client_pos[1],
+                    "left": client_pos[0],
+                    "width": actual_w,
+                    "height": actual_h
+                }
+                with mss.mss() as sct:
+                    sct_img = sct.grab(monitor)
+                    img = np.array(sct_img)[:, :, :3]
+                    img = np.ascontiguousarray(img)
+
+            if img is None or img.size == 0:
+                self._log_debug('capture_background: PrintWindow returned no image')
+                return None
 
             if img.shape[1] < target_w or img.shape[0] < target_h:
                 pad_bottom = max(0, target_h - img.shape[0])
@@ -379,13 +427,6 @@ class OnmyojiBot:
                             break
                 except Exception:
                     pass
-                if win32gui.IsIconic(root):
-                    try:
-                        win32gui.ShowWindow(root, win32con.SW_RESTORE)
-                        time.sleep(0.25)
-                        self._log_debug('Restored minimized window for capture_screen')
-                    except Exception:
-                        pass
             except Exception:
                 pass
             img = self.capture_background(hwnd)
@@ -505,6 +546,78 @@ class OnmyojiBot:
                 return False
         else:
             self._log_debug('click: no client hwnd available')
+            return False
+
+    def _get_game_root_hwnd(self):
+        hwnd = getattr(self, 'current_hwnd', None)
+        if not hwnd:
+            hwnd = self._find_game_window_win32()
+        if not hwnd or not win32gui or not win32gui.IsWindow(hwnd):
+            return None
+        root = hwnd
+        while True:
+            parent = win32gui.GetParent(root)
+            if not parent:
+                return root
+            root = parent
+
+    def hide_game_window(self):
+        """Move the game off-screen without minimizing or activating it."""
+        if win32gui is None:
+            self._log_debug('hide_game_window: pywin32 is unavailable')
+            return False
+        try:
+            root = self._get_game_root_hwnd()
+            if not root:
+                self._log_debug('hide_game_window: game window not found')
+                return False
+            if win32gui.IsIconic(root):
+                win32gui.ShowWindow(root, win32con.SW_RESTORE)
+                time.sleep(0.1)
+            if not self.game_hidden:
+                self.game_window_rect = win32gui.GetWindowRect(root)
+            left, top, right, bottom = self.game_window_rect or win32gui.GetWindowRect(root)
+            width = max(1, right - left)
+            height = max(1, bottom - top)
+            flags = win32con.SWP_NOZORDER | win32con.SWP_NOACTIVATE | win32con.SWP_SHOWWINDOW
+            win32gui.SetWindowPos(root, 0, -(width + 50), top, width, height, flags)
+            self.current_hwnd = root
+            self.game_hidden = True
+            self._log_debug(f'Game hidden off-screen: hwnd={root}, original_rect={self.game_window_rect}')
+            return True
+        except Exception as e:
+            self._log_debug(f'hide_game_window failed: {e}')
+            return False
+
+    def show_game_window(self):
+        """Restore the game to the position it had before being hidden."""
+        if win32gui is None:
+            self._log_debug('show_game_window: pywin32 is unavailable')
+            return False
+        try:
+            root = self._get_game_root_hwnd()
+            if not root:
+                self._log_debug('show_game_window: game window not found')
+                return False
+            rect = self.game_window_rect
+            if rect is None:
+                rect = win32gui.GetWindowRect(root)
+            left, top, right, bottom = rect
+            if win32gui.IsIconic(root):
+                win32gui.ShowWindow(root, win32con.SW_RESTORE)
+            flags = win32con.SWP_NOZORDER | win32con.SWP_SHOWWINDOW
+            win32gui.SetWindowPos(root, 0, left, top, right - left, bottom - top, flags)
+            win32gui.ShowWindow(root, win32con.SW_SHOWNORMAL)
+            win32gui.BringWindowToTop(root)
+            try:
+                win32gui.SetForegroundWindow(root)
+            except Exception as focus_error:
+                self._log_debug(f'show_game_window: could not set foreground: {focus_error}')
+            self.game_hidden = False
+            self._log_debug(f'Game restored: hwnd={root}, rect={rect}')
+            return True
+        except Exception as e:
+            self._log_debug(f'show_game_window failed: {e}')
             return False
 
     def find_and_click(self, template_name, threshold=None):
@@ -867,7 +980,6 @@ class OnmyojiBot:
             return True
 
         self.load_templates()
-        self._log_debug(f"Start requested for task={self.current_task}")
         self.last_start_error = None
         missing_templates = self.get_missing_templates_for_task(self.current_task)
         if missing_templates:
@@ -1014,6 +1126,8 @@ class OnmyojiBot:
             print("\n🛑 Đã nhận lệnh dừng từ người dùng!")
 
         self._log_debug("Scanning stopped.")
+        if self.game_hidden:
+            self.show_game_window()
 
         # Cập nhật GUI nếu có
         if self.gui:

@@ -4,3 +4,4 @@ pyautogui
 pillow
 pygetwindow
 pywin32
+mss

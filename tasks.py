@@ -9,18 +9,6 @@ tasks = {
         ],
         'current_step': 0
     },
-    'exploration': {
-        'name': 'Exploration',
-        'steps': [
-            {'action': 'find_click', 'target': 'exploration_button', 'desc': 'Chọn Exploration'},
-            {'action': 'find_click', 'target': 'chapter_button', 'desc': 'Chọn Chapter'},
-            {'action': 'find_click', 'target': 'zone_button', 'desc': 'Chọn Zone'},
-            {'action': 'find_click', 'target': 'explore_button', 'desc': 'Nhấn nút Explore'},
-            {'action': 'wait', 'time': 2, 'desc': 'Chờ chút'},
-            {'action': 'repeat', 'desc': 'Lặp lại'}
-        ],
-        'current_step': 0
-    },
     'realm_raid': {
         'name': 'Realm Raid',
         'mode': 'dynamic',

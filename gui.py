@@ -66,6 +66,13 @@ class OnmyojiBotGUI:
         self.stop_button = ttk.Button(control_frame, text="⏹ DỪNG", command=self.on_stop, state=tk.DISABLED)
         self.stop_button.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
 
+        self.hide_game_button = ttk.Button(
+            control_frame,
+            text="Ẩn game",
+            command=self.on_toggle_game_visibility,
+        )
+        self.hide_game_button.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
+
         # --- Phần cài đặt tinh chỉnh ---
         settings_exp = ttk.LabelFrame(main_frame, text="Cài đặt thông số", padding="5")
         settings_exp.pack(fill=tk.X, padx=5, pady=5)
@@ -111,10 +118,7 @@ class OnmyojiBotGUI:
             # CHỈ cập nhật trạng thái lỗi, KHÔNG gọi hàm dừng ở đây
             self.update_status("Lỗi khởi động!", color="red")
 
-        if self.bot.start_scanning():
-            self.update_status(f"RUNNING: {self.task_var.get()}", color="green")
-            self.start_button.config(state=tk.DISABLED)
-            self.stop_button.config(state=tk.NORMAL)
+        if started:
             self.write_log(f"--- BẮT ĐẦU NHIỆM VỤ: {self.task_var.get()} ---")
 
     def on_stop(self):
@@ -122,7 +126,24 @@ class OnmyojiBotGUI:
         self.update_status("STOPPED", color="red")
         self.start_button.config(state=tk.NORMAL)
         self.stop_button.config(state=tk.DISABLED)
+        self.hide_game_button.config(text="Ẩn game")
         self.write_log("--- ĐÃ DỪNG TOOL ---")
+
+    def on_toggle_game_visibility(self):
+        if self.bot.game_hidden:
+            changed = self.bot.show_game_window()
+            next_text = "Ẩn game"
+            message = "Đã hiện game"
+        else:
+            changed = self.bot.hide_game_window()
+            next_text = "Hiện game"
+            message = "Đã ẩn game ra ngoài màn hình"
+
+        if changed:
+            self.hide_game_button.config(text=next_text)
+            self.write_log(message)
+        else:
+            self.update_status("Không thể thay đổi trạng thái cửa sổ game", color="red")
 
     def increment_battle(self):
         """Hàm để bot gọi khi kết thúc 1 trận"""
@@ -133,7 +154,12 @@ class OnmyojiBotGUI:
     def update_task_list(self):
         task_names = [task['name'] for task in self.bot.tasks.values()]
         self.task_combo['values'] = task_names
-        if task_names:
+        task_keys = list(self.bot.tasks.keys())
+        if 'realm_raid' in task_keys:
+            realm_raid_index = task_keys.index('realm_raid')
+            self.task_combo.current(realm_raid_index)
+            self.bot.current_task = 'realm_raid'
+        elif task_names:
             self.task_combo.current(0)
             self.on_task_selected()
 
@@ -146,6 +172,8 @@ class OnmyojiBotGUI:
 
     def on_close(self):
         self.bot.stop_scanning()
+        if self.bot.game_hidden:
+            self.bot.show_game_window()
         self.root.destroy()
 
     def run(self):
