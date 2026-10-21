@@ -1,0 +1,50 @@
+name: Build Windows executable
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pyinstaller
+
+      - name: Build executable
+        shell: pwsh
+        run: |
+          pyinstaller `
+            --noconfirm `
+            --clean `
+            --onedir `
+            --console `
+            --name OnmyojiAutoBot `
+            --add-data "templates;templates" `
+            main.py
+
+      - name: Copy usage files
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist\OnmyojiAutoBot\logs | Out-Null
+          Copy-Item README.md dist\OnmyojiAutoBot\README.md
+          Copy-Item requirements.txt dist\OnmyojiAutoBot\requirements.txt
+
+      - name: Upload executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: OnmyojiAutoBot-windows
+          path: dist/OnmyojiAutoBot
