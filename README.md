@@ -12,6 +12,7 @@ Tool tự động hóa một số thao tác trong Onmyoji bằng nhận diện h
 - Nút **Ẩn game** đưa cửa sổ game ra ngoài màn hình nhưng không minimize.
 - Nút **Hiện game** khôi phục vị trí/kích thước cũ và đưa game lên foreground.
 - Khi dừng hoặc đóng tool, game đang bị ẩn sẽ được hiện lại.
+- Kiểm tra phiên bản mới từ GitHub Releases.
 
 ## Yêu cầu
 
@@ -59,6 +60,8 @@ v1.0.0
 ```
 
 Bản build là dạng thư mục portable, không phải một file `.exe` độc lập. Khi chạy, giữ nguyên toàn bộ thư mục và mở `OnmyojiAutoBot.exe`. Thư mục `templates` đã được đóng gói vào bản build, nên không được xóa các file đi kèm trong thư mục artifact.
+
+Khi có release mới, tool sẽ tự kiểm tra cập nhật khi mở và có thể kiểm tra lại bằng nút **Cập nhật**. Nếu có phiên bản mới, tool mở trang GitHub Release để tải file `.zip`. Phiên bản đầu tiên không tự ghi đè file `.exe` đang chạy.
 
 ## Template hình ảnh
 

@@ -1,6 +1,10 @@
 import tkinter as tk
 from tkinter import ttk, simpledialog, messagebox, scrolledtext
 from datetime import datetime
+import threading
+import webbrowser
+
+from updater import check_for_update
 
 
 class OnmyojiBotGUI:
@@ -21,6 +25,7 @@ class OnmyojiBotGUI:
         # Khởi tạo các thành phần giao diện
         self.create_widgets()
         self.update_task_list()
+        self.root.after(1000, self.check_for_updates)
 
     def create_widgets(self):
         """Tạo các thành phần giao diện"""
@@ -73,6 +78,13 @@ class OnmyojiBotGUI:
         )
         self.hide_game_button.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
 
+        self.update_button = ttk.Button(
+            control_frame,
+            text="Cập nhật",
+            command=self.check_for_updates,
+        )
+        self.update_button.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
+
         # --- Phần cài đặt tinh chỉnh ---
         settings_exp = ttk.LabelFrame(main_frame, text="Cài đặt thông số", padding="5")
         settings_exp.pack(fill=tk.X, padx=5, pady=5)
@@ -103,6 +115,39 @@ class OnmyojiBotGUI:
 
     def on_scan_change(self, val):
         self.bot.config['scan_interval'] = float(val)
+
+    def check_for_updates(self):
+        self.update_button.config(state=tk.DISABLED)
+        self.write_log("Đang kiểm tra bản cập nhật...")
+
+        def worker():
+            try:
+                update = check_for_update()
+                self.root.after(0, self._show_update_result, update, None)
+            except RuntimeError as error:
+                self.root.after(0, self._show_update_result, None, str(error))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _show_update_result(self, update, error):
+        self.update_button.config(state=tk.NORMAL)
+        if error:
+            self.write_log(f"Không thể kiểm tra cập nhật: {error}")
+            return
+        if update is None:
+            self.write_log("Bạn đang dùng phiên bản mới nhất.")
+            return
+
+        self.write_log(
+            f"Có phiên bản mới {update.latest_version} "
+            f"(hiện tại {update.current_version})."
+        )
+        if messagebox.askyesno(
+            "Có bản cập nhật mới",
+            f"Đã có phiên bản {update.latest_version}. Mở trang tải xuống?",
+            parent=self.root,
+        ):
+            webbrowser.open(update.release_url)
 
     def on_start(self):
         if not self.bot.current_task:
