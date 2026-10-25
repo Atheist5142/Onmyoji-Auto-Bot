@@ -107,7 +107,7 @@ class OnmyojiBot:
                 'realm_raid_button', 'refresh_button', 'enemy_button',
                 'start_button', 'attack_button', 'ready_button', 'battle_screen', 'auto_button',
                 'victory_screen', 'reward_screen', 'exit_button', 'section', 'enemy_event', 'empty',
-                'coopwanted', 'refuse', 'ok'
+                'coopwanted', 'refuse', 'ok', 'nether_seed', 'root_out'
             ],
             'souls': [
                 'start_button',
@@ -125,6 +125,8 @@ class OnmyojiBot:
             'coopwanted': ['coopwanted'],
             'refuse': ['refuse'],
             'ok': ['ok'],
+            'nether_seed': ['nether_seed'],
+            'root_out': ['root_out'],
             'realm_raid_button': ['realm_raid_button', 'realmRaid', 'realmraid'],
             'refresh_button': ['refresh_button', 'refresh'],
             'enemy_button': ['enemy_button', 'section', 'click'],
@@ -151,6 +153,15 @@ class OnmyojiBot:
         self._realm_no_target_count = 0
         self._last_refresh_time = 0
         self._refresh_cooldown = 5.0
+        self._nether_seed_positions = [
+            (651, 595), (766, 466), (734, 586), (857, 466),
+            (820, 593), (942, 465), (909, 590), (1028, 468),
+            (998, 590), (1066, 474), (1084, 596), (1075, 470),
+        ]
+        self._nether_seed_waiting_for_clear = False
+        self._nether_seed_visible_streak = 0
+        self._nether_seed_clear_streak = 0
+        self._nether_seed_detected_at = None
 
     def _create_template_directories(self):
         os.makedirs(self.config['template_dir'], exist_ok=True)
@@ -159,13 +170,14 @@ class OnmyojiBot:
             folder_path = os.path.join(self.config['template_dir'], folder)
             os.makedirs(folder_path, exist_ok=True)
 
-    def _get_existing_category_path(self, category):
+    def _get_existing_category_path(self, category, base_path=None):
         candidates = self.template_folder_candidates.get(category, [category])
+        root = base_path if base_path is not None else ''
         for folder in candidates:
-            folder_path = os.path.join(self.config['template_dir'], folder)
+            folder_path = os.path.join(root, self.config['template_dir'], folder)
             if os.path.isdir(folder_path):
                 return folder_path
-        return os.path.join(self.config['template_dir'], candidates[0])
+        return os.path.join(root, self.config['template_dir'], candidates[0])
 
     def _resolve_template_path(self, category_path, template_name):
         aliases = self.template_aliases.get(template_name, [template_name])
@@ -181,8 +193,7 @@ class OnmyojiBot:
         self.templates = {}
         base_path = get_resource_path("templates")
         for category, templates in self.template_mapping.items():
-            # Tạo đường dẫn thư mục loại
-            category_path = os.path.join(base_path, category)
+            category_path = self._get_existing_category_path(category, os.path.dirname(base_path))
             for template_name in templates:
                 template_path = self._resolve_template_path(category_path, template_name)
                 if template_path and os.path.exists(template_path):
@@ -804,6 +815,112 @@ class OnmyojiBot:
             time.sleep(0.3)
         return False
 
+    def _handle_coop_invite(self, screen):
+        if not self.find_template(screen, 'coopwanted', threshold=0.8):
+            return False
+
+        refuse_match = self.find_template(screen, 'refuse', threshold=0.8)
+        if not refuse_match:
+            self._log_debug("Phát hiện coopwanted nhưng chưa thấy refuse.png.")
+            return False
+
+        self._log_debug("Phát hiện coopwanted, đang bấm refuse.png.")
+        self.click(refuse_match['x'], refuse_match['y'])
+        if self.gui:
+            self.gui.write_log("Đã từ chối lời mời truy nã yêu quái.")
+        return True
+
+    def _click_nether_seed_positions(self, cycle_name, check_root_out=True):
+        if check_root_out:
+            positions = self._nether_seed_positions[::2]
+            positions = positions[:5] + [self._nether_seed_positions[11]]
+            position_indexes = (1, 3, 5, 7, 9, 12)
+        else:
+            positions = self._nether_seed_positions
+            position_indexes = tuple(range(1, len(positions) + 1))
+        self._log_debug(
+            f"Xử lý Hoa của Bỉ ({cycle_name}): click {len(positions)} vị trí."
+        )
+        for index, (x, y) in zip(position_indexes, positions):
+            if not self.config.get('active'):
+                break
+            self.click(x, y)
+            if not check_root_out:
+                continue
+            root_out_match = self._wait_for_root_out(timeout=1.5)
+            if root_out_match:
+                self._log_debug(
+                    f"Phát hiện root_out sau vị trí {index}, đang click "
+                    f"tại {root_out_match['x']},{root_out_match['y']}."
+                )
+                self.click(root_out_match['x'], root_out_match['y'])
+                time.sleep(0.2)
+
+    def _wait_for_root_out(self, timeout=1.5):
+        deadline = time.time() + timeout
+        while self.config.get('active') and time.time() < deadline:
+            screen = self.capture_screen()
+            root_out_match = self.find_template(screen, 'root_out', threshold=0.8)
+            if root_out_match:
+                return root_out_match
+            time.sleep(0.1)
+        return None
+
+    def _process_nether_seed(self, screen):
+        nether_seeds = self.find_all_templates(
+            screen,
+            'nether_seed',
+            threshold=0.85,
+            max_results=6,
+            min_distance=20,
+        )
+        if nether_seeds:
+            self._nether_seed_visible_streak += 1
+            self._nether_seed_clear_streak = 0
+            if self._nether_seed_detected_at is None:
+                self._nether_seed_detected_at = time.time()
+        else:
+            self._nether_seed_visible_streak = 0
+            self._nether_seed_detected_at = None
+            if self._nether_seed_waiting_for_clear:
+                self._nether_seed_clear_streak += 1
+            else:
+                self._nether_seed_clear_streak = 0
+
+        if (
+            nether_seeds
+            and self._nether_seed_detected_at is not None
+            and time.time() - self._nether_seed_detected_at >= 20.0
+            and not self._nether_seed_waiting_for_clear
+        ):
+            self._click_nether_seed_positions("lần 1")
+            self._nether_seed_waiting_for_clear = True
+            self._nether_seed_detected_at = None
+            self._nether_seed_clear_streak = 0
+            if self.gui:
+                self.gui.write_log(
+                    f"Đã phát hiện {len(nether_seeds)} Hoa của Bỉ, đã xử lý 6 vị trí chính."
+                )
+            return True
+
+        if (
+            not nether_seeds
+            and self._nether_seed_waiting_for_clear
+            and self._nether_seed_clear_streak >= 2
+        ):
+            self._click_nether_seed_positions(
+                "lần 2 sau khi debuff biến mất",
+                check_root_out=False,
+            )
+            self._nether_seed_waiting_for_clear = False
+            self._nether_seed_clear_streak = 0
+            self._nether_seed_detected_at = None
+            if self.gui:
+                self.gui.write_log("Hoa của Bỉ đã biến mất, đã xử lý lại 6 vị trí chính.")
+            return True
+
+        return False
+
     def execute_realm_raid_logic(self):
         if not self.current_task:
             return False
@@ -822,20 +939,7 @@ class OnmyojiBot:
                 return False
 
             # --- 0.1. TỪ CHỐI LỜI MỜI TRUY / CO-OP WANTED ---
-            coop_match = self.find_template(screen, 'coopwanted', threshold=0.8)
-            if coop_match:
-                self._log_debug("Có người mời truy nã yêu quái, đang từ chối lời mời...")
-                refuse_match = self.find_template(screen, 'refuse', threshold=0.8)
-                if refuse_match:
-                    self.click(refuse_match['x'], refuse_match['y'])
-                    if self.gui:
-                        self.gui.write_log("Đã từ chối lời mời truy nã yêu quái.")
-                    return True
-
-                # Fallback an toàn nếu không tìm thấy template refuse
-                self.click(560, 485)
-                if self.gui:
-                    self.gui.write_log("Đã bấm vị trí fallback để từ chối lời mời truy nã yêu quái.")
+            if self._handle_coop_invite(screen):
                 return True
 
             # --- ƯU TIÊN SỐ 1: TRONG TRẬN (Battle Screen) ---
@@ -843,8 +947,21 @@ class OnmyojiBot:
                 self.game_state['screen'] = 'in_battle'
                 if self.gui: self.gui.update_status("Đang trong trận...", color="blue")
 
-                # Đợi cho đến khi màn hình Reward hiện ra (Victory tự nhảy qua nên không cần check)
-                if self.wait_for_template('reward_screen', timeout=130):
+                if self._process_nether_seed(screen):
+                    return True
+
+                # Đợi Reward nhưng vẫn quét debuff trong suốt trận.
+                reward_found = False
+                battle_deadline = time.time() + 130
+                while self.config.get('active') and time.time() < battle_deadline:
+                    battle_screen = self.capture_screen()
+                    if self.find_template(battle_screen, 'reward_screen', threshold=0.8):
+                        reward_found = True
+                        break
+                    self._process_nether_seed(battle_screen)
+                    time.sleep(0.3)
+
+                if reward_found:
                     self._log_debug("Thấy màn hình Reward. Đang chuẩn bị click thoát trận...")
 
                     # Nghỉ 1.5s để bảng quà hiện ra ổn định (tránh click khi nó đang bay ra)
@@ -861,6 +978,10 @@ class OnmyojiBot:
                         if self.gui:
                             self.gui.write_log("Thắng trận! Đã nhận quà và quay về chọn địch.")
                             self.gui.increment_battle()  # Tăng bộ đếm trận thắng trên GUI
+                        self._nether_seed_waiting_for_clear = False
+                        self._nether_seed_visible_streak = 0
+                        self._nether_seed_clear_streak = 0
+                        self._nether_seed_detected_at = None
                     else:
                         # Click đại vào vùng an toàn để không bị kẹt
                         self.click(568, 100)
@@ -1143,6 +1264,11 @@ class OnmyojiBot:
         loop_count = 0
         while self.config['active']:
             try:
+                screen = self.capture_screen()
+                if self._handle_coop_invite(screen):
+                    time.sleep(self.config['scan_interval'])
+                    continue
+
                 success = self.execute_task_step()
                 loop_count += 1
                 if loop_count % 5 == 0:
