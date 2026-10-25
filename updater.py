@@ -1,8 +1,11 @@
 import json
 import re
+import ssl
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
+
+import certifi
 
 from version import APP_VERSION, GITHUB_REPOSITORY
 
@@ -32,12 +35,18 @@ def check_for_update(timeout=5):
     )
 
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        ssl_context = ssl.create_default_context(cafile=certifi.where())
+        with urllib.request.urlopen(request, timeout=timeout, context=ssl_context) as response:
             payload = json.load(response)
     except urllib.error.HTTPError as error:
         raise RuntimeError(f"GitHub API returned HTTP {error.code}") from error
     except urllib.error.URLError as error:
-        raise RuntimeError(f"Cannot connect to GitHub: {error.reason}") from error
+        reason = error.reason
+        if isinstance(reason, ssl.SSLError):
+            raise RuntimeError(
+                "Cannot verify GitHub's HTTPS certificate. Please check your system date/time or network security software."
+            ) from error
+        raise RuntimeError(f"Cannot connect to GitHub: {reason}") from error
     except json.JSONDecodeError as error:
         raise RuntimeError("GitHub returned invalid release data") from error
 

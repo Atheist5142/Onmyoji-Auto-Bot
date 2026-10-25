@@ -46,7 +46,7 @@ jobs:
             --noconfirm `
             --clean `
             --onedir `
-            --console `
+            --noconsole `
             --name OnmyojiAutoBot `
             --add-data "templates;templates" `
             main.py
